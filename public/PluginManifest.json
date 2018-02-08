@@ -1,10 +1,10 @@
 ﻿{
     // ID must be unique on the gallery
     "Id": "Geofencing.Beta",
-    "Name": "[test-only] Beta of new Geofencing plugin",
+    "Name": "Geofencing plugin",
     "Author" :  "Voter-Science",
     "Website" :  "https://github.com/Voter-Science/trc.geofence",
-    "Description": "[test-only] A new geofencing plugin .",        
-    "Version": "0.9.0", // User SemVer
-    "Tags": [ "Beta" , "geofence" ]
+    "Description": "Displays a sheet on the map and let you draw boundaries to split it into multiple regions. You can then assign those regions individually",        
+    "Version": "0.10.0", // User SemVer
+    "Tags": [ "geofence", "partition" ]
 }

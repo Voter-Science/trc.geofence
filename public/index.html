@@ -18,7 +18,7 @@
 
     // Well-known entry point, called by hosting infrastructure
     function PluginMain(sheetRef, opts) {                
-        _pluginModule.MyPlugin.BrowserEntry(sheetRef, opts, function(plugin) {
+        _pluginModule.MyPlugin.BrowserEntry(sheetRef, opts).then(function(plugin) {
             _plugin = plugin;
             // Called when finished loading to show main body
             $("#prebody").hide();  

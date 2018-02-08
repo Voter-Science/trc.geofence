@@ -7,10 +7,23 @@
 // see: https://github.com/googlemaps/js-marker-clusterer
 // https://googlemaps.github.io/js-marker-clusterer/docs/reference.html 
 
-import * as trc from '../node_modules/trclib/trc2';
-import * as html from '../node_modules/trclib/trchtml';
-import * as trcFx from '../node_modules/trclib/trcfx';
-import * as trcPoly from '../node_modules/trclib/polygonHelper';
+//import * as trc from '../node_modules/trclib/trc2';
+//import * as html from '../node_modules/trclib/trchtml';
+//import * as trcFx from '../node_modules/trclib/trcfx';
+//import * as trcPoly from '../node_modules/trclib/polygonHelper';
+import * as XC from 'trc-httpshim/xclient'
+import * as common from 'trc-httpshim/common'
+
+import * as core from 'trc-core/core'
+
+import * as trcSheet from 'trc-sheet/sheet'
+import * as trcSheetContents from 'trc-sheet/sheetContents'
+import * as trcPoly from 'trc-sheet/polygonHelper';
+import * as trcSheetEx from 'trc-sheet/sheetEx'
+
+import * as plugin from 'trc-web/plugin'
+import * as trchtml from 'trc-web/html'
+
 
 declare var $: any; // external definition for JQuery
 declare var MarkerClusterer: any; // external definition 
@@ -45,8 +58,8 @@ interface IRow {
 
 // Main plugin. 
 export class MyPlugin {
-    private _sheet: trc.Sheet;
-    private _opts: trc.IPluginOptions;
+    private _sheet:  trcSheet.SheetClient;
+    private _opts: plugin.IPluginOptions;
 
     private _rows: IRow[];
     private _map: any;
@@ -73,25 +86,25 @@ export class MyPlugin {
     // Entry point called from brower. 
     // This creates real browser objects and passes in. 
     public static BrowserEntry(
-        sheet: trc.ISheetReference,
-        opts: trc.IPluginOptions,
-        next: (plugin: MyPlugin) => void
-    ): void {
-        var trcSheet = new trc.Sheet(sheet);
+        auth: plugin.IStart,
+        opts: plugin.IPluginOptions
+    ):  Promise<MyPlugin>  {
+
+        var pluginClient = new plugin.PluginClient(auth, opts);
+        var sheet =  new trcSheet.SheetClient(pluginClient.HttpClient, pluginClient.SheetId);
         // var opts2 = trc.PluginOptionsHelper.New(opts, trcSheet);
 
         // Do any IO here...
-        html.Loading("prebody2");
+        trchtml.Loading("prebody2");
 
-        trcSheet.getInfo((info) => {
-            trcSheet.getSheetContents((data) => {
+        return sheet.getInfoAsync().then((info) => {
+            return sheet.getSheetContentsAsync().then((data) => {
 
-                var polyHelper = new trcPoly.PolygonHelper(trcSheet);
+                var polyHelper = new trcPoly.PolygonHelper(sheet);
 
-                trcSheet.getChildren(children => {
-                    var plugin = new MyPlugin(trcSheet, info, data, children, polyHelper, opts);
-                    next(plugin);
-
+                return sheet.getChildrenAsync().then(children => {
+                    var plugin = new MyPlugin(sheet, info, data, children, polyHelper, opts);
+                    
                     // $$$ We shouldn't need a deferred timer here, but this invoke must come after the map finishes drawing else
                     // the google map doesn't render properly. Don't know why.
                     // It'd be great to get rid of the timer. 
@@ -100,6 +113,8 @@ export class MyPlugin {
                             $("#prebody2").hide();
                         }
                     ), 3000);
+
+                    return plugin;
                 });
             });
         });
@@ -113,6 +128,9 @@ export class MyPlugin {
     // Reverse of CreateFilter expression. Gets the DataId back out. 
     // Returns null if not found
     public static GetPolygonIdFromFilter(filter: string): string {
+        if (filter == null) {
+            return null;
+        }
         var n = filter.match(/IsInPolygon.'(.+)',Lat,Long/i);
         if (n == null) {
             return null;
@@ -125,7 +143,7 @@ export class MyPlugin {
     // It's a *huge* performance penalty to interleave them because it prevents map rendering
     // from being batched up and done all at once.  
     private BuildPartitions(
-        children: trc.IGetChildrenResultEntry[],
+        children: trcSheet.IGetChildrenResultEntry[],
         callback: () => void
     ): void {
         var _missing = 0;
@@ -165,10 +183,10 @@ export class MyPlugin {
         for (var i = 0; i < children.length; i++) {
             var _child = children[i];
 
-            ((child: trc.IGetChildrenResultEntry) => {
+            ((child: trcSheet.IGetChildrenResultEntry) => {
                 var sheetId = child.Id;
                 var childSheet = this._sheet.getSheetById(sheetId);
-                childSheet.getInfo(childInfo => {
+                childSheet.getInfoAsync().then(childInfo => {
                     var filter = child.Filter;
                     var dataId = MyPlugin.GetPolygonIdFromFilter(filter);
                     if (dataId == null) {
@@ -176,7 +194,7 @@ export class MyPlugin {
                         _missing++;
                         next();
                     } else {
-                        this._polyHelper.getPolygonById(dataId, (polySchema) => {
+                        this._polyHelper.getPolygonByIdAsync(dataId).then((polySchema) => {
                             if (polySchema == null) {
                                 _missing++;
                             }
@@ -207,7 +225,7 @@ export class MyPlugin {
     private FinishInit(callback: () => void): void {
         var other = 0;
         // Get existing child sheets
-        this._sheet.getChildren(children => {
+        this._sheet.getChildrenAsync().then(children => {
             this.BuildPartitions(children, () => {
                 this.updateClusterMap();
                 callback();
@@ -215,7 +233,7 @@ export class MyPlugin {
         });
     }
 
-    private static parseSheetContents(data: trc.ISheetContents): IRow[] {
+    private static parseSheetContents(data: trcSheetContents.ISheetContents): IRow[] {
         var colRecId = data["RecId"];
         var colLat = data["Lat"];
         var colLong = data["Long"];
@@ -245,12 +263,12 @@ export class MyPlugin {
     }
 
     public constructor(
-        sheet: trc.Sheet,
-        info: trc.ISheetInfoResult,
-        data: trc.ISheetContents,
-        children: trc.IGetChildrenResultEntry[],
+        sheet: trcSheet.SheetClient,
+        info:trcSheet.ISheetInfoResult,
+        data: trcSheetContents.ISheetContents,
+        children: trcSheet.IGetChildrenResultEntry[],
         polyHelper: trcPoly.PolygonHelper,
-        opts: trc.IPluginOptions
+        opts: plugin.IPluginOptions
     ) {
         this._sheet = sheet;
         this._rows = MyPlugin.parseSheetContents(data);
@@ -271,7 +289,7 @@ export class MyPlugin {
     }
 
     // https://developers.google.com/maps/documentation/javascript/examples/polygon-simple
-    static newPolygon(schema: trc.IPolygonSchema, map: any): any {
+    static newPolygon(schema: trcSheet.IPolygonSchema, map: any): any {
         var coords: any = [];
         for (var i = 0; i < schema.Lat.length; i++) {
             coords.push({
@@ -377,8 +395,8 @@ export class MyPlugin {
 
             if (remove) {
                 var partition = this._partitions[sheetId];
-                this._sheet.deleteChildSheet(sheetId, () => {
-                    this._sheet.deleteCustomData(trc.PolygonKind, partition.dataId, () => {
+                return this._sheet.deleteChildSheetAsync(sheetId).then(() => {
+                    return this._sheet.deleteCustomDataAsync(trcSheet.PolygonKind, partition.dataId).then(() => {
                         {
                             this.removeWalklist(sheetId);
                             this.removeGlobalPolygon(sheetId);
@@ -429,10 +447,10 @@ export class MyPlugin {
     // Called when we finish drawing a polygon and confirmed we want to create a walklist. 
     private createWalklist(partitionName: string, countInside: number, polygon: any) {
         var vertices = MyPlugin.getVertices(polygon);
-        this._polyHelper.createPolygon(partitionName, vertices, (dataId) => {
+        return this._polyHelper.createPolygon(partitionName, vertices).then((dataId) => {
 
             var filter = MyPlugin.CreateFilter(dataId);
-            this._sheet.createChildSheetFromFilter(partitionName, filter, false, (childSheet: trc.Sheet) => {
+            return this._sheet.createChildSheetFromFilterAsync(partitionName, filter, false).then((childSheet: trcSheet.SheetClient) => {
                 var sheetId = childSheet.getId();
 
                 this._partitions[sheetId] = {
@@ -569,7 +587,7 @@ export class MyPlugin {
         var polygon = partition.polygon;
         var vertices = MyPlugin.getVertices(polygon);
 
-        this._polyHelper.updatePolygon(partition.dataId, partition.name, vertices,
+        return this._polyHelper.updatePolygonAsync(partition.dataId, partition.name, vertices).then(
             (dataId: string) => {
                 // $$$ - UI update.If we shrink the polygon, we should add back old markers.
                 // If we shrunk, show old values. (like a delete)
