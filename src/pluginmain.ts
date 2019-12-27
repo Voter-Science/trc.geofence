@@ -284,7 +284,11 @@ export class MyPlugin {
         this._markerCluster = new MarkerClusterer(
             this._map,
             [], { imagePath: 'https://cdn.rawgit.com/googlemaps/js-marker-clusterer/gh-pages/images/m' });
-
+			
+        // Hide refresh button and clear local storage until we need it
+        document.getElementById('refresh').style.display = 'none';
+        localStorage.removeItem('alerted');
+	
         // Loading existing children will happen in FinishInit()
     }
 
@@ -587,14 +591,67 @@ export class MyPlugin {
         var polygon = partition.polygon;
         var vertices = MyPlugin.getVertices(polygon);
 
-        return this._polyHelper.updatePolygonAsync(partition.dataId, partition.name, vertices).then(
-            (dataId: string) => {
-                // $$$ - UI update.If we shrink the polygon, we should add back old markers.
-                // If we shrunk, show old values. (like a delete)
-                // If we grew, show new values. 
-                this.hideMarkers(polygon);
-                this.updateClusterMap();
-            });
+     //   return this._polyHelper.updatePolygonAsync(partition.dataId, partition.name, vertices).then(
+     //       (dataId: string) => {
+     //            $$$ - UI update.If we shrink the polygon, we should add back old markers.
+     //            If we shrunk, show old values. (like a delete)
+     //            If we grew, show new values. 
+     //           this.hideMarkers(polygon);
+     //           this.updateClusterMap();
+     //       });
+	 
+     // This new code will delete all children sheets under a changed polygon and create a new child sheet with the new shape
+	 // We warn the user so they can cancel.  At this time there is no good library function to recursively recalculate all
+	 // the children if a parent changes its boundaries so it is easiest just to delete them for now.  This is not ideal
+	 // but it does work.
+     var countInside = this.countNumberInPolygon(polygon);
+     var listName = partition.name;
+     var infoWindow = partition.infoWindow;
+
+     var alerted = localStorage.getItem('alerted') || '';
+     if (alerted != 'yes') {
+       localStorage.setItem('alerted', 'yes');
+
+       if (
+         !confirm(
+           'Warning: resizing polygon will unshare it with users AND DELETE ANY CHILD SHEETS.  Do you want to continue?'
+         )
+       ) {
+         location.reload(true);
+       }
+     }
+
+     return this._polyHelper
+       .updatePolygonAsync(partition.dataId, partition.name, vertices)
+       .then((dataId: string) => {
+         console.log('back from updatePolygonAsync');
+         return this._sheet.deleteChildSheetAsync(sheetId).then(() => {
+           return this._sheet
+             .deleteCustomDataAsync(trcSheet.PolygonKind, partition.dataId)
+             .then(() => {
+               {
+                 this.removeWalklist(sheetId);
+
+                 if (infoWindow != null) {
+                   infoWindow.close();
+                 }
+
+                 this.showMarkers(partition.polygon);
+                 this.updateClusterMap();
+               }
+             });
+         });
+       })
+       .then(() => {
+         console.log('back from deleteWalklistAuto');
+         return this.createWalklist(listName, countInside, polygon);
+       })
+       .then(() => {
+         console.log('In hide and update');
+         this.hideMarkers(polygon);
+         this.updateClusterMap();
+         document.getElementById('refresh').style.display = 'block';
+       });	 
     }
 
 
