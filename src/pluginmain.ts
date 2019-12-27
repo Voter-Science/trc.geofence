@@ -515,6 +515,33 @@ export class MyPlugin {
         });
         infoWindow.open(this._map);
         this._partitions[sheetId].infoWindow = infoWindow;
+
+
+        const path = polygon.getPath();
+        let snappingPath = false
+
+        // when a polygon is edited, compare the changed point to all other
+        // points on the map and set it to the nearest if it's near enough
+        path.addListener('set_at', (index: number) => {
+            if (snappingPath) { return; }
+
+            const zoom: number = this._map.getZoom();
+
+            snappingPath = true;
+            const updatedPoint = path.getAt(index);
+            const nearest = this.getNearestPoint({ polygon, index });
+
+            if (nearest.point &&
+                nearest.distance < 30 &&
+                nearest.point.lat() !== updatedPoint.lat() &&
+                nearest.point.lng() !== updatedPoint.lng()) {
+
+                path.setAt(index, nearest.point);
+            }
+
+            snappingPath = false;
+        });
+
     }
 
     private updateCounterText(): void {
@@ -738,5 +765,36 @@ export class MyPlugin {
         this._markerCluster.addMarkers(visibleMarkers);
 
         this.updateCounterText();
+    }
+
+    // find the nearest other point. takes an object with targetPoint or
+    // polygon and point index. Points in the given polygon is excluded from search.
+    private getNearestPoint({
+        polygon: targetPolygon,
+        index,
+        point: targetPoint = targetPolygon.getPath().getAt(index)
+    }: any) {
+        const nearest = { point: null as any, distance: Infinity };
+
+        for (const id in this._partitions) {
+            const polygon = this._partitions[id].polygon;
+
+            // skip polygon containing the targetPoint
+            if (polygon === targetPolygon) { continue; }
+
+            polygon.getPath().forEach((point: any) => {
+                if (point === targetPoint) { return; }
+
+                const distance = google.maps.geometry.spherical.computeDistanceBetween(
+                    point, targetPoint);
+
+                if (distance < nearest.distance) {
+                    nearest.point = point;
+                    nearest.distance = distance;
+                }
+            });
+        }
+
+        return nearest;
     }
 }
