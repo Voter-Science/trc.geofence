@@ -241,6 +241,8 @@ export class MyPlugin {
         var result: IRow[] = [];
         var numRows = colRecId.length;
 
+        var missing : number = 0;
+
         for (var i = 0; i < numRows; i++) {
             var id = colRecId[i];
             var strlat = colLat[i];
@@ -250,6 +252,7 @@ export class MyPlugin {
             var lng = parseFloat(strlng);
 
             if (isNaN(lat) || isNaN(lng)) {
+                missing++;
                 continue;
             }
 
@@ -259,6 +262,17 @@ export class MyPlugin {
                 Long: lng
             });
         }
+
+        var complete = result.length;
+        var percentComplete = Math.floor((complete * 100) / numRows);
+
+        if (missing > 50 && percentComplete > 20) 
+        {
+            alert("Warning ... Sheet is only " + percentComplete + "% geocoded ("  + complete + " of " + numRows +
+                "). You can still do geofencing and new pins will be assigned into the regions as they're geocoded. " + 
+                "Contact info@voter-science.com to request further geocoding.");
+        }
+
         return result;
     }
 
