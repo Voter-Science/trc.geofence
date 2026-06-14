@@ -3,7 +3,10 @@
 <link rel="stylesheet" href="stylesheets/bootstrap.min.css">
 <link rel="stylesheet" type="text/css" href="stylesheets/trcgrid.css">
   
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDPEmHsLQ-OQpWL2AsjYwYq55XjW7k1oZY&libraries=drawing,geometry" type="text/javascript"></script>
+<!-- 'drawing' library removed: Google deleted google.maps.drawing from the Maps JS API in v3.65 (May 2026).
+     Polygon drawing is now done with a custom click-to-draw tool in pluginmain.ts. 'geometry' is still
+     required by isInsidePolygon (containsLocation). -->
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDPEmHsLQ-OQpWL2AsjYwYq55XjW7k1oZY&libraries=geometry" type="text/javascript"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/randomcolor/0.4.2/randomColor.min.js"></script>
 <script src="https://cdn.rawgit.com/googlemaps/js-marker-clusterer/gh-pages/src/markerclusterer.js"> </script>
 
