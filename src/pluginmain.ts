@@ -71,7 +71,18 @@ export class MyPlugin {
 
     private _totalVisible: number; // Markers not yet assigned to a partition
 
-    // $$$ find a way to avoid this.  
+    // Custom polygon-drawing state. Replaces google.maps.drawing.DrawingManager,
+    // which Google removed from the Maps JS API in v3.65 (May 2026).
+    private _drawingActive: boolean;
+    private _drawVertices: any[];       // google.maps.LatLng collected while drawing
+    private _drawVertexMarkers: any[];  // visual dots at each placed vertex
+    private _drawPolyline: any;         // live outline shown while drawing
+    private _drawClickListener: any;    // map 'click' listener handle
+    private _btnDraw: any;
+    private _btnFinish: any;
+    private _btnCancel: any;
+
+    // $$$ find a way to avoid this.
     private static _pluginId: string = "Geofencing.Beta";
 
     // $$$ Move to PluginOptionsHelper? 
@@ -345,45 +356,195 @@ export class MyPlugin {
     }
 
 
-    // add drawing capability to map
+    // add drawing capability to map.
+    //
+    // Google removed the Drawing library (google.maps.drawing.DrawingManager) from the
+    // Maps JavaScript API in v3.65 (deprecated Aug 2025, removed May 2026), so we implement
+    // a minimal click-to-draw polygon tool using native Maps primitives. The flow is the same
+    // as before: the user outlines a turf, and on "Finish" we hand a google.maps.Polygon to
+    // handlePolygonComplete() -- exactly what the old 'overlaycomplete' listener received.
     private initDrawingManager(map: any) {
-        var drawingManager = new google.maps.drawing.DrawingManager({
-            drawingMode: google.maps.drawing.OverlayType.POLYGON,
-            drawingControlOptions: {
-                position: google.maps.ControlPosition.TOP_CENTER,
-                drawingModes: [
-                    google.maps.drawing.OverlayType.POLYGON
-                ]
-            },
-            polygonOptions: {
-                editable: true
+        this._drawingActive = false;
+        this._drawVertices = [];
+        this._drawVertexMarkers = [];
+        this._drawPolyline = null;
+        this._drawClickListener = null;
+
+        // On-map control bar (mirrors the old DrawingManager TOP_CENTER control).
+        var controlDiv = document.createElement('div');
+        controlDiv.style.margin = '10px';
+
+        this._btnDraw = this.makeMapButton('Draw turf', () => this.startDrawing());
+        this._btnFinish = this.makeMapButton('Finish', () => this.finishDrawing());
+        this._btnCancel = this.makeMapButton('Cancel', () => this.cancelDrawing());
+
+        controlDiv.appendChild(this._btnDraw);
+        controlDiv.appendChild(this._btnFinish);
+        controlDiv.appendChild(this._btnCancel);
+
+        map.controls[google.maps.ControlPosition.TOP_CENTER].push(controlDiv);
+
+        this.updateDrawingControls();
+    }
+
+    // Build a Google-Maps-styled control button.
+    private makeMapButton(label: string, onClick: () => void): any {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = label;
+        btn.style.margin = '0 4px';
+        btn.style.padding = '6px 10px';
+        btn.style.background = '#fff';
+        btn.style.border = '1px solid #ccc';
+        btn.style.borderRadius = '2px';
+        btn.style.boxShadow = '0 1px 4px rgba(0,0,0,.3)';
+        btn.style.cursor = 'pointer';
+        btn.style.fontFamily = 'Roboto, Arial, sans-serif';
+        btn.style.fontSize = '13px';
+        google.maps.event.addDomListener(btn, 'click', onClick);
+        return btn;
+    }
+
+    // Show "Draw turf" when idle; show "Finish"/"Cancel" while drawing.
+    private updateDrawingControls() {
+        this._btnDraw.style.display = this._drawingActive ? 'none' : 'inline-block';
+        this._btnFinish.style.display = this._drawingActive ? 'inline-block' : 'none';
+        this._btnCancel.style.display = this._drawingActive ? 'inline-block' : 'none';
+    }
+
+    // Enter drawing mode: each map click adds a polygon vertex.
+    private startDrawing() {
+        if (this._drawingActive) { return; }
+        this._drawingActive = true;
+        this._drawVertices = [];
+        this._drawVertexMarkers = [];
+
+        // Live outline shown as the user clicks.
+        this._drawPolyline = new google.maps.Polyline({
+            map: this._map,
+            path: [],
+            strokeColor: '#FF0000',
+            strokeOpacity: 0.8,
+            strokeWeight: 2
+        });
+
+        this._drawClickListener = this._map.addListener('click', (event: any) => {
+            this.addDrawVertex(event.latLng);
+        });
+
+        // Use a crosshair while drawing so it's clear you're placing points (not panning).
+        this._map.setOptions({ draggableCursor: 'crosshair' });
+
+        this.updateDrawingControls();
+    }
+
+    // Add one clicked point to the in-progress polygon.
+    private addDrawVertex(latLng: any) {
+        // The very first point doubles as the "close the turf" target: click it to finish.
+        var isFirst = this._drawVertexMarkers.length === 0;
+
+        this._drawVertices.push(latLng);
+        this._drawPolyline.setPath(this._drawVertices);
+
+        var vm = new google.maps.Marker({
+            position: latLng,
+            map: this._map,
+            clickable: isFirst,
+            cursor: isFirst ? 'pointer' : undefined,
+            title: isFirst ? 'Click here to close the turf' : undefined,
+            icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: isFirst ? 6 : 4,
+                fillColor: isFirst ? '#FFFFFF' : '#FF0000',
+                fillOpacity: 1,
+                strokeColor: '#FF0000',
+                strokeWeight: 2
             }
         });
 
-        // add event listener for when shape is drawn
-        google.maps.event.addListener(drawingManager, 'overlaycomplete', (event: any) => {
-            var polygon = event.overlay;
-            var countInside = this.countNumberInPolygon(polygon);
+        // Clicking the starting dot closes the polygon (consumes the click, so no extra vertex).
+        if (isFirst) {
+            google.maps.event.addListener(vm, 'click', () => this.finishDrawing());
+        }
 
-            if (countInside === 0) {
-                alert("No records found in polygon");
-                event.overlay.setMap(null); // remove polygon
+        this._drawVertexMarkers.push(vm);
+    }
+
+    // Finish drawing: build the real polygon and run the turf-creation flow.
+    private finishDrawing() {
+        if (!this._drawingActive) { return; }
+
+        if (this._drawVertices.length < 3) {
+            alert("Draw at least 3 points to make a turf polygon.");
+            return;
+        }
+
+        var vertices = this._drawVertices.slice();
+        this.teardownDrawing();
+
+        var polygon = new google.maps.Polygon({
+            paths: vertices,
+            strokeColor: '#FF0000',
+            strokeOpacity: 0.8,
+            strokeWeight: 2,
+            fillColor: '#FF0000',
+            fillOpacity: 0.35,
+            editable: true
+        });
+        polygon.setMap(this._map);
+
+        this.handlePolygonComplete(polygon);
+    }
+
+    // Abandon the in-progress polygon.
+    private cancelDrawing() {
+        this.teardownDrawing();
+    }
+
+    // Remove all temporary drawing overlays/listeners and leave drawing mode.
+    private teardownDrawing() {
+        this._drawingActive = false;
+
+        // Restore the normal map cursor.
+        this._map.setOptions({ draggableCursor: null });
+
+        if (this._drawClickListener != null) {
+            google.maps.event.removeListener(this._drawClickListener);
+            this._drawClickListener = null;
+        }
+        if (this._drawPolyline != null) {
+            this._drawPolyline.setMap(null);
+            this._drawPolyline = null;
+        }
+        for (var i = 0; i < this._drawVertexMarkers.length; i++) {
+            this._drawVertexMarkers[i].setMap(null);
+        }
+        this._drawVertexMarkers = [];
+        this._drawVertices = [];
+
+        this.updateDrawingControls();
+    }
+
+    // Called once a polygon has been drawn. (Previously the body of the
+    // DrawingManager 'overlaycomplete' listener.)
+    private handlePolygonComplete(polygon: any) {
+        var countInside = this.countNumberInPolygon(polygon);
+
+        if (countInside === 0) {
+            alert("No records found in polygon");
+            polygon.setMap(null); // remove polygon
+        } else {
+            var walklistName = prompt("Name of walklist");
+
+            if (walklistName === null) {
+                polygon.setMap(null); // remove polygon
+            } else if (walklistName === "") {
+                alert("Walklist name can't be empty");
+                polygon.setMap(null);
             } else {
-                var walklistName = prompt("Name of walklist");
-
-                if (walklistName === null) {
-                    event.overlay.setMap(null); // remove polygon
-                } else if (walklistName === "") {
-                    alert("Walklist name can't be empty");
-                    event.overlay.setMap(null);
-                } else {
-                    this.createWalklist(walklistName, countInside, polygon);
-                }
-
+                this.createWalklist(walklistName, countInside, polygon);
             }
-        });
-
-        drawingManager.setMap(map);
+        }
     }
 
     // remove polygon/polyline from global var _polygons
